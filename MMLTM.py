@@ -99,16 +99,16 @@ def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,
     promo_control=utility
     #print("t="+str(0)+" adoption="+str(round(adoption/n,2))+", curr_prod_qual="+str(round(prods[0],2))+", curr_price="+str(round(prices[0],2))+", curr_dist_int="+str(round(places[0],2))+", curr_ad_exp="+str(round(promos[0],2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
     for t in range(periods):
-        prod_control=logistic(cost_to_revenue,r_prod)
-        price_control=logistic(1-demand,1/r_price)
-        place_control=logistic(availability,r_place)
-        promo_control=logistic(utility,1/r_promo)
+        prod_control=1/logistic(prod_control,r_prod)
+        price_control=1/abs(logistic(price_control,r_price)-price_control)
+        place_control=1/logistic(place_control,r_place)
+        promo_control=1/logistic(promo_control,r_promo)
 
         promo_cost+=promo_control
         if t%10==0 or t==periods-1:
             print("t="+str(t+1)+" adoption="+str(round(adoption/n,2))+", prod_qual="+str(round(prod_control,2))+", price="+str(round(price_control,2))+", dist_int="+str(round(place_control,2))+", ad_exp="+str(round(promo_control,2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
         prod,price,place,promo=prod_control,price_control,place_control,promo_control
-        #prod,price,place,promo=prod_control,price_control,place_control,promo_control
+
         states=dict()
         for node in nodes:
             curr_state=[s for s in G.nodes()[node]['states']]
@@ -123,12 +123,8 @@ def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,
         cost=(prod_control+place_control+promo_control)
         revenue=(adoption/n)*price_control
         cost_to_revenue=revenue/cost
-        #if previous_state==0 and t<periods-last:
-            #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
-            #raise ValueError
     state_matrix=np.array(list(nx.get_node_attributes(G,"states").values()))
     state_matrix=np.array(state_matrix)/n
-    #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
     return state_matrix
 
 def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
@@ -181,10 +177,6 @@ def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
                       ", r_promo="+str(round(unit[1],2))+
                       ", p="+str(round(p,4))+
                       ", sim="+str(sim+1)+
-                      #", prod_qual="+prod_inc+
-                      #", price_level="+price_inc+
-                      #", dist_intensity="+place_inc+
-                      #", promo_exp="+promo_inc+
                       ", run. max lyapunov="+str(round(np.max([lyap,max_lyap]),2))
                       )
             else:
@@ -195,10 +187,6 @@ def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
                       ", r_promo="+str(round(unit[1],2))+
                       ", p="+str(round(p,4))+
                       ", sim="+str(sim+1)+
-                      #", prod_qual="+prod_inc+
-                      #", price_level="+price_inc+
-                      #", dist_intensity="+place_inc+
-                      #", promo_exp="+promo_inc+
                       ", inf. lyapunov"
                       )
         stop = time.time()
@@ -217,11 +205,11 @@ def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
                       )
     return np.array(steadystates),np.array(lyapunovs)
 
-launch_mkt_budget=1.5
+launch_mkt_budget=0.5
 n=500          #graph network size
 seed_set_p=0.05#seed set size
-iterations=100  #diffusion iterations
-simulations=1  #Monte Carlo simulations within each DoE unit
+iterations=150  #diffusion iterations
+simulations=5  #Monte Carlo simulations within each DoE unit
 last=25         #steadystate size
 r_levels=100    #r factor levels
 p_levels=1     #p factor levels
