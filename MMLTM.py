@@ -10,7 +10,7 @@ import time
 from pyformlang.regular_expression import Regex
 import cmath
 
-#See Chapter 3 - Sof Shifts of 
+#See Chapter 3 - Sofic Shifts in
 #Lind & Marcus "An Introduction to Symbolic Dynamics and Coding"
 def symbolic_adjacency_matrix(alphabet,states,transition_function):
     sam=np.zeros([len(states),len(states)])
@@ -276,7 +276,7 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
                       #", r_price="+str(round(unit[0],2))+
                       #", r_place="+str(round(unit[0],2))+
                       #", r_promo="+str(round(unit[0],2))+
-                      ", entropy="+str(round(np.mean(entropy),2))+
+                      ", entropy="+str(round(np.mean(entropies),2))+
                       #", avg_num_words="+str(round(np.mean(word_lens),1))+
                       ", largest lyapunov="+str(round(max_lyap,1))+
                       ", time="+str(round(duration,0))+"s"
