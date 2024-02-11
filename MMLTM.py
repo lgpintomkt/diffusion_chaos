@@ -7,8 +7,27 @@ from numpy.random import uniform
 from doepy import build
 import pandas as pd
 import time
+from pyformlang.regular_expression import Regex
+import cmath
+
+#See Chapter 3 - Sof Shifts of 
+#Lind & Marcus "An Introduction to Symbolic Dynamics and Coding"
+def symbolic_adjacency_matrix(alphabet,states,transition_function):
+    sam=np.zeros([len(states),len(states)])
+    for k,symbol in enumerate(alphabet):
+        for i,state_from in enumerate(states):
+            for j,state_to in enumerate(states):
+                if state_to in transition_function(s_from=state_from,symb_by=symbol):
+                    sam[i,j]+=1
+                    sam[j,i]+=1
+    return sam
 
 NUM_FLOOR=1e-4
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
 def logistic(x,r):
     return abs(1-r*x)
@@ -73,12 +92,9 @@ def random_mkt_mix(budget,periods,granularity=1000):
     mkt_mix=np.array(mkt_mix)+NUM_FLOOR
     return mkt_mix
 
-def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,r_place=None,r_promo=None,last=25):
+def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_price=None,r_place=None,r_promo=None,last=25):
     periods=iterations#mkt_mix.shape[1]
-    G=nx.gnp_random_graph(n,p)
-    nodes=G.nodes()
-    attributes=random_attributes(G,seed_set_p)
-    nx.set_node_attributes(G,attributes)
+    
     #prods,prices,places,promos=mkt_mix[0,:],mkt_mix[1,:],mkt_mix[2,:],mkt_mix[3,:]
     prods,prices,places,promos=[mkt_mix[0]],[mkt_mix[1]],[mkt_mix[2]],[mkt_mix[3]]
     
@@ -86,7 +102,7 @@ def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,
     promo_cost=0
     
     adoption=np.sum([st[-1] for st in nx.get_node_attributes(G,'states').values()])
-    demand=(np.sum([attr['budget']>prices[0] for attr in attributes.values()])-adoption)/n
+    demand=(np.sum([attr['budget']>prices[0] for attr in attributes.values()])-adoption)/G.number_of_nodes()
     availability=places[0]*demand
     utility=prods[0]*promos[0]*adoption/n
     cost=(prods[0]+places[0]+promos[0])/3
@@ -98,6 +114,7 @@ def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,
     place_control=availability
     promo_control=utility
     #print("t="+str(0)+" adoption="+str(round(adoption/n,2))+", curr_prod_qual="+str(round(prods[0],2))+", curr_price="+str(round(prices[0],2))+", curr_dist_int="+str(round(places[0],2))+", curr_ad_exp="+str(round(promos[0],2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
+    symbols=[]
     for t in range(periods):
         prod_control=1/logistic(prod_control,r_prod)
         price_control=1/abs(logistic(price_control,r_price)-price_control)
@@ -105,10 +122,20 @@ def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,
         promo_control=1/logistic(promo_control,r_promo)
 
         promo_cost+=promo_control
-        if t%10==0 or t==periods-1:
-            print("t="+str(t+1)+" adoption="+str(round(adoption/n,2))+", prod_qual="+str(round(prod_control,2))+", price="+str(round(price_control,2))+", dist_int="+str(round(place_control,2))+", ad_exp="+str(round(promo_control,2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
+        
+        if t>=periods-last:
+            state=adoption/n
+            if state==0:
+                symbol='0'
+            elif state>0.5:
+                symbol='R'
+            else:
+                symbol='L'
+            symbols.append(symbol)
+        #if (t%1==0 or t==periods-1) and t>=periods-last:
+        #     print("t="+str(t+1)+" symbol="+symbol+" adoption="+str(state)+", prod_qual="+str(round(prod_control,2))+", price="+str(round(price_control,2))+", dist_int="+str(round(place_control,2))+", ad_exp="+str(round(promo_control,2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
         prod,price,place,promo=prod_control,price_control,place_control,promo_control
-
+        #prod,price,place,promo=prod_control,price_control,place_control,promo_control
         states=dict()
         for node in nodes:
             curr_state=[s for s in G.nodes()[node]['states']]
@@ -123,34 +150,73 @@ def simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod=None,r_price=None,
         cost=(prod_control+place_control+promo_control)
         revenue=(adoption/n)*price_control
         cost_to_revenue=revenue/cost
+        #if previous_state==0 and t<periods-last:
+            #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
+            #raise ValueError
+    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,2)] if len(word)==2]))
+    #words.sort()
+    #print("list of 2-words obtained: "+str(words))
+    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,3)] if len(word)==3]))
+    #words.sort()
+    #print("list of 3-words obtained: "+str(words))
+    words=[]
+    max_size=4
+    for size in range(1,max_size+1):
+        words+=list(set([''.join(word) for word in [i for i in chunks(symbols,size)] if len(word)==size]))
+    words=list(set(words))
+    words.sort()
+    #print("words: "+str(words))
+    for i,word in enumerate(words):
+        words[i]=" ".join(word)
+    regex = Regex('|'.join(words))
+    
+    dfa=regex.to_epsilon_nfa().to_deterministic()
+    alphabet=list(dfa.symbols)
+    states=list(dfa.states)
+    transition_function=dfa._transition_function
+    sam=symbolic_adjacency_matrix(alphabet,states,transition_function)
+    eigenvals=np.linalg.eigvals(sam)
+    max_eigenval=eigenvals.max()
+    entropy=cmath.log(max_eigenval)
+    #print('Entropy: '+str(round(entropy,2)))
+    
+    #print(str(len(words))+" words of len 4: "+str(words))
     state_matrix=np.array(list(nx.get_node_attributes(G,"states").values()))
     state_matrix=np.array(state_matrix)/n
-    return state_matrix
+    #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
+    return state_matrix,len(words),entropy
 
-def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
+def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
     print("Starting simulation with "+str(len(doe))+" exp. units each with "+str(sims)+" Monte Carlo simulations: a total of "+str(len(doe)*sims)+" runs...")
     steadystates=[]
     lyapunovs=[]
+    G=nx.gnp_random_graph(n,p)
+    nodes=G.nodes()
+    attributes=random_attributes(G,seed_set_p)
+    nx.set_node_attributes(G,attributes)
     for unit in doe:
         start = time.time()
         #r_promo=unit[0]
         #r_price=unit[1]
-        r_prod=r_price=unit[0]
-        r_place=r_promo=unit[1]
-        p=unit[2]
+        r_prod=unit[0]
+        r_price=unit[0]
+        r_place=unit[0]
+        r_promo=unit[0]
+        #p=unit[1]
         #r_prod=unit[0]
         #r_price=unit[1]
         #r_place=unit[2]
         #r_promo=unit[3]
         max_lyap=float('-inf')
         x_isset=False
+        word_lens=[]
+        entropies=[]
         for sim in range(sims):
             #within each Monte Carlo simulation
             #we generate a random Watts-Stroggatz Graph with parameter p,n=500
-            #we generate a random seed node sample always with seed_p=0.05
-            #we generate a random initial marketing mix
-            #we generate a random distribution of the thresholds uniformly
-            #we generate a random distribution of the budgets uniformly
+            #we generate a random initial marketing mix within a given launch marketing budget
+            #we generate a random distribution of the thresholds
+            #we generate a random distribution of the budgets
             mkt_mix=random_mkt_mix(budget,iterations) #generate initial mkt mix
             #prod,price,place,promo=mkt_mix[0,:],mkt_mix[1,:],mkt_mix[2,:],mkt_mix[3,:]
             prod,price,place,promo=mkt_mix[0],mkt_mix[1],mkt_mix[2],mkt_mix[3]
@@ -159,9 +225,11 @@ def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
             #place_inc='inc' if np.all(place[1:] >= place[:-1]) else 'dec'
             #promo_inc='inc' if np.all(promo[1:] >= promo[:-1]) else 'dec'
             try:
-                simulation=simulate_control(iterations,n,p,seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
+                simulation,word_length,entropy=simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
                 diffusion=simulation.sum(axis=0)
-                steadystate=diffusion[-last:].round(2)
+                steadystate=diffusion[-last:]
+                word_lens.append(word_length)
+                entropies.append(entropy.real)
             except ValueError:
                 steadystate=np.zeros((last))
             lyap=nolds.lyap_e(steadystate)[0]
@@ -169,56 +237,66 @@ def simulate_system(doe,budget,n,seed_set_p,iterations,sims,last):
                 max_lyap=lyap
                 x=steadystate
                 x_isset=True
-            if lyap != float('inf') and max_lyap != float('-inf'): #check if lyapunov exponent is finite
-                print(
-                      "r_prod="+str(round(unit[0],2))+
-                      ", r_price="+str(round(unit[0],2))+
-                      ", r_place="+str(round(unit[1],2))+
-                      ", r_promo="+str(round(unit[1],2))+
-                      ", p="+str(round(p,4))+
-                      ", sim="+str(sim+1)+
-                      ", run. max lyapunov="+str(round(np.max([lyap,max_lyap]),2))
-                      )
-            else:
-                print(
-                      "r_prod="+str(round(unit[0],2))+
-                      ", r_price="+str(round(unit[0],2))+
-                      ", r_place="+str(round(unit[1],2))+
-                      ", r_promo="+str(round(unit[1],2))+
-                      ", p="+str(round(p,4))+
-                      ", sim="+str(sim+1)+
-                      ", inf. lyapunov"
-                      )
+            # if lyap != float('inf') and max_lyap != float('-inf'): #check if lyapunov exponent is finite
+            #     print(
+            #           "r="+str(round(unit[0],2))+
+            #           #", r_price="+str(round(unit[0],2))+
+            #           #", r_place="+str(round(unit[1],2))+
+            #           #", r_promo="+str(round(unit[1],2))+
+            #           #", p="+str(round(p,4))+
+            #           ", sim="+str(sim+1)+
+            #           #", prod_qual="+prod_inc+
+            #           #", price_level="+price_inc+
+            #           #", dist_intensity="+place_inc+
+            #           #", promo_exp="+promo_inc+
+            #           ", run. max lyapunov="+str(round(np.max([lyap,max_lyap]),2))
+            #           )
+            # else:
+            #     print(
+            #           "r="+str(round(unit[0],2))+
+            #           #", r_price="+str(round(unit[0],2))+
+            #           #", r_place="+str(round(unit[1],2))+
+            #           #", r_promo="+str(round(unit[1],2))+
+            #           #", p="+str(round(p,4))+
+            #           ", sim="+str(sim+1)+
+            #           #", prod_qual="+prod_inc+
+            #           #", price_level="+price_inc+
+            #           #", dist_intensity="+place_inc+
+            #           #", promo_exp="+promo_inc+
+            #           ", inf. lyapunov"
+            #           )
         stop = time.time()
         duration = stop-start
         if x_isset:
             steadystates.append((unit[0],x))
             lyapunovs.append((unit[0],max_lyap))
             print(
-                      "r_prod="+str(round(unit[0],2))+
-                      ", r_price="+str(round(unit[0],2))+
-                      ", r_place="+str(round(unit[0],2))+
-                      ", r_promo="+str(round(unit[0],2))+
-                      ", p="+str(round(unit[1],10))+
-                      ", largest lyapunov="+str(round(max_lyap,2))+
+                      "r="+str(round(unit[0],2))+
+                      #"r_prod="+str(round(unit[0],2))+
+                      #", r_price="+str(round(unit[0],2))+
+                      #", r_place="+str(round(unit[0],2))+
+                      #", r_promo="+str(round(unit[0],2))+
+                      ", entropy="+str(round(np.mean(entropy),2))+
+                      #", avg_num_words="+str(round(np.mean(word_lens),1))+
+                      ", largest lyapunov="+str(round(max_lyap,1))+
                       ", time="+str(round(duration,0))+"s"
                       )
     return np.array(steadystates),np.array(lyapunovs)
 
 launch_mkt_budget=0.5
-n=500          #graph network size
+n=300          #graph network size
 seed_set_p=0.05#seed set size
-iterations=150  #diffusion iterations
-simulations=5  #Monte Carlo simulations within each DoE unit
-last=25         #steadystate size
-r_levels=100    #r factor levels
+iterations=250  #diffusion iterations
+simulations=1  #Monte Carlo simulations within each DoE unit
+last=50         #steadystate size
+r_levels=200    #r factor levels
 p_levels=1     #p factor levels
-r = np.linspace(2.5, 4, r_levels)
-r_prod = np.linspace(4, 2.5, r_levels)
+r = np.linspace(0, 4, r_levels)
+r_prod  = np.linspace(2.5, 4.0, r_levels)
 r_price = np.linspace(2.5, 4.0, r_levels)
 r_place = np.linspace(2.5, 4.0, r_levels)
 r_promo = np.linspace(2.5, 4.0, r_levels)
-p = np.linspace(0.03, 0.03, p_levels)
+p = 0.01#np.linspace(0.01, 0.01, p_levels)
 
 #     'r_prod':r_prod,
 #     'r_price':r_price,
@@ -226,40 +304,42 @@ p = np.linspace(0.03, 0.03, p_levels)
 #     'r_promo':r_promo,
 
 doe=build.full_fact({
-     'r':r,
-     'r2':r_prod,
-     'p':p
+    'r':r,
+    #'p':p
      }).values.tolist()
-np.random.shuffle(doe)
+#np.random.shuffle(doe)
 
-steadystates,lyapunovs = simulate_system(doe,launch_mkt_budget,n,seed_set_p,iterations,simulations,last)
-
+steadystates,lyapunovs = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,simulations,last)
+steadystates=steadystates[steadystates[:, 0].argsort()]
+lyapunovs=lyapunovs[lyapunovs[:,0].argsort()]
 rows=steadystates.shape[0]
-data=pd.DataFrame(np.concatenate([steadystates,lyapunovs[:,2].reshape(rows,1)],axis=1),columns=['p','steadystate','lyapunov'])
-data=data.groupby(['p']).agg({'lyapunov':'max','steadystate':'first'})
+data=pd.DataFrame(np.concatenate([steadystates,lyapunovs[:,1].reshape(rows,1)],axis=1),columns=['r','steadystate','lyapunov'])
+data=data.groupby(['r']).agg({'lyapunov':'max','steadystate':'first'})
 
 #Plots
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 9),
                                sharex=True)
+r=data.index
 lyapunov=data['lyapunov'].values
 x=np.array([np.array(xi) for xi in data['steadystate'].values])
-ax1.plot(p, x, ',k', alpha=.25)
-ax1.set_xlim(2.5, 4)
+ax1.plot(r, x, ',k', alpha=.55)
+ax1.set_xlim(0, 4)
+ax1.set_ylim(0, 1)
 ax1.set_title("Bifurcation diagram")
 
 # We display the Lyapunov exponent.
 # Horizontal line.
 ax2.axhline(0, color='k', lw=.5, alpha=.3)
 # Negative Lyapunov exponent.
-ax2.plot(p[lyapunov < 0],
-         lyapunov[lyapunov < 0] / last,
-         '.k', alpha=.3, ms=.5)
+ax2.plot(r[lyapunov < 0],
+         lyapunov[lyapunov < 0],
+         '.k', alpha=1, ms=.5)
 # Positive Lyapunov exponent.
-ax2.plot(p[lyapunov >= 0],
-         lyapunov[lyapunov >= 0] / last,
-         '.r', alpha=.3, ms=.5)
-ax2.set_xlim(2.5, 4)
-ax2.set_ylim(-0.005, 0.015)
+ax2.plot(r[lyapunov >= 0],
+         lyapunov[lyapunov >= 0],
+         '.r', alpha=1, ms=.5)
+ax2.set_xlim(0, 4)
+ax2.set_ylim(-0.2, 0.2)
 ax2.set_title("Lyapunov exponent")
 plt.tight_layout()
 
