@@ -9,6 +9,7 @@ import pandas as pd
 import time
 from pyformlang.regular_expression import Regex
 import cmath
+import copy
 
 #See Chapter 3 - Sofic Shifts in
 #Lind & Marcus "An Introduction to Symbolic Dynamics and Coding"
@@ -225,7 +226,7 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
             #place_inc='inc' if np.all(place[1:] >= place[:-1]) else 'dec'
             #promo_inc='inc' if np.all(promo[1:] >= promo[:-1]) else 'dec'
             try:
-                simulation,word_length,entropy=simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
+                simulation,word_length,entropy=simulate_control(iterations,copy.deepcopy(G),copy.deepcopy(attributes),seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
                 diffusion=simulation.sum(axis=0)
                 steadystate=diffusion[-last:]
                 word_lens.append(word_length)
@@ -281,7 +282,7 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
                       ", largest lyapunov="+str(round(max_lyap,1))+
                       ", time="+str(round(duration,0))+"s"
                       )
-    return np.array(steadystates),np.array(lyapunovs)
+    return np.array(steadystates),np.array(lyapunovs),np.array(entropies)
 
 launch_mkt_budget=0.5
 n=300          #graph network size
@@ -289,7 +290,7 @@ seed_set_p=0.05#seed set size
 iterations=250  #diffusion iterations
 simulations=1  #Monte Carlo simulations within each DoE unit
 last=50         #steadystate size
-r_levels=200    #r factor levels
+r_levels=10000    #r factor levels
 p_levels=1     #p factor levels
 r = np.linspace(0, 4, r_levels)
 r_prod  = np.linspace(2.5, 4.0, r_levels)
@@ -309,7 +310,7 @@ doe=build.full_fact({
      }).values.tolist()
 #np.random.shuffle(doe)
 
-steadystates,lyapunovs = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,simulations,last)
+steadystates,lyapunovs,entropies = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,simulations,last)
 steadystates=steadystates[steadystates[:, 0].argsort()]
 lyapunovs=lyapunovs[lyapunovs[:,0].argsort()]
 rows=steadystates.shape[0]
