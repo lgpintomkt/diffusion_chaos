@@ -161,12 +161,14 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     #words.sort()
     #print("list of 3-words obtained: "+str(words))
     words=[]
-    max_size=4
+    max_size=3
     for size in range(1,max_size+1):
         words+=list(set([''.join(word) for word in [i for i in chunks(symbols,size)] if len(word)==size]))
+    #size=3
+    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,size)] if len(word)==size]))
     words=list(set(words))
     words.sort()
-    #print("words: "+str(words))
+    print("words: "+str(words))
     for i,word in enumerate(words):
         words[i]=" ".join(word)
     regex = Regex('|'.join(words))
@@ -179,6 +181,8 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     eigenvals=np.linalg.eigvals(sam)
     max_eigenval=eigenvals.max()
     entropy=cmath.log(max_eigenval)
+    print("number of DFA states="+str(len(states)))
+    print(alphabet)
     #print('Entropy: '+str(round(entropy,2)))
     
     #print(str(len(words))+" words of len 4: "+str(words))
@@ -191,8 +195,11 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
     print("Starting simulation with "+str(len(doe))+" exp. units each with "+str(sims)+" Monte Carlo simulations: a total of "+str(len(doe)*sims)+" runs...")
     steadystates=[]
     lyapunovs=[]
+    entropies=[]
+    print("Generating random Watts-Strogatz graph...")
     G=nx.gnp_random_graph(n,p)
     nodes=G.nodes()
+    print("Generating initial seed set, budget, and thresholds...")
     attributes=random_attributes(G,seed_set_p)
     nx.set_node_attributes(G,attributes)
     for unit in doe:
@@ -211,7 +218,6 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
         max_lyap=float('-inf')
         x_isset=False
         word_lens=[]
-        entropies=[]
         for sim in range(sims):
             #within each Monte Carlo simulation
             #we generate a random Watts-Stroggatz Graph with parameter p,n=500
@@ -287,12 +293,12 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
 launch_mkt_budget=0.5
 n=300          #graph network size
 seed_set_p=0.05#seed set size
-iterations=250  #diffusion iterations
+iterations=400  #diffusion iterations
 simulations=1  #Monte Carlo simulations within each DoE unit
-last=50         #steadystate size
+last=200         #steadystate size
 r_levels=10000    #r factor levels
 p_levels=1     #p factor levels
-r = np.linspace(0, 4, r_levels)
+r = np.linspace(2, 4, r_levels)
 r_prod  = np.linspace(2.5, 4.0, r_levels)
 r_price = np.linspace(2.5, 4.0, r_levels)
 r_place = np.linspace(2.5, 4.0, r_levels)
@@ -308,7 +314,7 @@ doe=build.full_fact({
     'r':r,
     #'p':p
      }).values.tolist()
-#np.random.shuffle(doe)
+np.random.shuffle(doe)
 
 steadystates,lyapunovs,entropies = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,simulations,last)
 steadystates=steadystates[steadystates[:, 0].argsort()]
@@ -324,7 +330,7 @@ r=data.index
 lyapunov=data['lyapunov'].values
 x=np.array([np.array(xi) for xi in data['steadystate'].values])
 ax1.plot(r, x, ',k', alpha=.55)
-ax1.set_xlim(0, 4)
+ax1.set_xlim(2, 4)
 ax1.set_ylim(0, 1)
 ax1.set_title("Bifurcation diagram")
 
@@ -339,7 +345,7 @@ ax2.plot(r[lyapunov < 0],
 ax2.plot(r[lyapunov >= 0],
          lyapunov[lyapunov >= 0],
          '.r', alpha=1, ms=.5)
-ax2.set_xlim(0, 4)
+ax2.set_xlim(2, 4)
 ax2.set_ylim(-0.2, 0.2)
 ax2.set_title("Lyapunov exponent")
 plt.tight_layout()
