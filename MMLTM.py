@@ -25,10 +25,13 @@ def symbolic_adjacency_matrix(alphabet,states,transition_function):
 
 NUM_FLOOR=1e-4
 
-def chunks(lst, n):
-    """Yield successive n-sized chunks from lst."""
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
+#def chunks(lst, n):
+#    """Yield successive n-sized chunks from lst."""
+#    for i in range(0, len(lst), n):
+#        yield lst[i:i + n]
+
+def chunks(s, w):
+    return [s[i:i + w] for i in range(0, len(s), w)]
 
 def logistic(x,r):
     return abs(1-r*x)
@@ -127,7 +130,7 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
         if t>=periods-last:
             state=adoption/n
             if state==0:
-                symbol='0'
+                symbol='C'
             elif state>0.5:
                 symbol='R'
             else:
@@ -161,14 +164,14 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     #words.sort()
     #print("list of 3-words obtained: "+str(words))
     words=[]
-    max_size=3
-    for size in range(1,max_size+1):
-        words+=list(set([''.join(word) for word in [i for i in chunks(symbols,size)] if len(word)==size]))
+    max_period=4
+    for period in range(1,max_period+1):
+        words+=list(set([''.join(word) for word in [i for i in chunks(symbols,period)] if len(word)==period]))
     #size=3
-    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,size)] if len(word)==size]))
-    words=list(set(words))
+    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,period)] if len(word)==period]))
+    words=list(set(words))+list("")
     words.sort()
-    print("words: "+str(words))
+    #print("words: "+str(words))
     for i,word in enumerate(words):
         words[i]=" ".join(word)
     regex = Regex('|'.join(words))
@@ -181,8 +184,8 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     eigenvals=np.linalg.eigvals(sam)
     max_eigenval=eigenvals.max()
     entropy=cmath.log(max_eigenval)
-    print("number of DFA states="+str(len(states)))
-    print(alphabet)
+    #print("number of DFA states="+str(len(states)))
+    #print(alphabet)
     #print('Entropy: '+str(round(entropy,2)))
     
     #print(str(len(words))+" words of len 4: "+str(words))
@@ -218,6 +221,7 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
         max_lyap=float('-inf')
         x_isset=False
         word_lens=[]
+        entrs=[]
         for sim in range(sims):
             #within each Monte Carlo simulation
             #we generate a random Watts-Stroggatz Graph with parameter p,n=500
@@ -236,7 +240,7 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
                 diffusion=simulation.sum(axis=0)
                 steadystate=diffusion[-last:]
                 word_lens.append(word_length)
-                entropies.append(entropy.real)
+                entrs.append(entropy.real)
             except ValueError:
                 steadystate=np.zeros((last))
             lyap=nolds.lyap_e(steadystate)[0]
@@ -277,25 +281,43 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
         if x_isset:
             steadystates.append((unit[0],x))
             lyapunovs.append((unit[0],max_lyap))
+            entropies.append((unit[0],entropy.real))
             print(
-                      "r="+str(round(unit[0],2))+
+                      "r={:.4f}".format(round(unit[0], 4))+
+                      #"r="+str(round(unit[0],4))+
                       #"r_prod="+str(round(unit[0],2))+
                       #", r_price="+str(round(unit[0],2))+
                       #", r_place="+str(round(unit[0],2))+
                       #", r_promo="+str(round(unit[0],2))+
-                      ", entropy="+str(round(np.mean(entropies),2))+
+                      ", topological entropy={:.1f}".format(round(np.mean(entrs),1))+
                       #", avg_num_words="+str(round(np.mean(word_lens),1))+
-                      ", largest lyapunov="+str(round(max_lyap,1))+
+                      ", largest lyapunov={:+.1f}".format(round(max_lyap,1))+
                       ", time="+str(round(duration,0))+"s"
                       )
+            print("")
+        else:
+            entropies.append((unit[0],entropy.real))
+            print(
+                      "r={:.4f}".format(round(unit[0], 4))+
+                      #"r="+str(round(unit[0],4))+
+                      #"r_prod="+str(round(unit[0],2))+
+                      #", r_price="+str(round(unit[0],2))+
+                      #", r_place="+str(round(unit[0],2))+
+                      #", r_promo="+str(round(unit[0],2))+
+                      ", topological entropy={:.1f}".format(round(np.mean(entrs),1))+
+                      #", avg_num_words="+str(round(np.mean(word_lens),1))+
+                      ", largest lyapunov=inf"+
+                      ", time="+str(round(duration,0))+"s"
+                      )
+            print("")
     return np.array(steadystates),np.array(lyapunovs),np.array(entropies)
 
 launch_mkt_budget=0.5
 n=300          #graph network size
 seed_set_p=0.05#seed set size
-iterations=400  #diffusion iterations
+iterations=250  #diffusion iterations
 simulations=1  #Monte Carlo simulations within each DoE unit
-last=200         #steadystate size
+last=50         #steadystate size
 r_levels=10000    #r factor levels
 p_levels=1     #p factor levels
 r = np.linspace(2, 4, r_levels)
@@ -314,7 +336,7 @@ doe=build.full_fact({
     'r':r,
     #'p':p
      }).values.tolist()
-np.random.shuffle(doe)
+#np.random.shuffle(doe)
 
 steadystates,lyapunovs,entropies = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,simulations,last)
 steadystates=steadystates[steadystates[:, 0].argsort()]
