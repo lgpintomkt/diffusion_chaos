@@ -9,6 +9,7 @@ import pandas as pd
 import time
 from pyformlang.regular_expression import Regex
 import cmath
+import math
 import copy
 
 #See Chapter 3 - Sofic Shifts in
@@ -192,7 +193,7 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     state_matrix=np.array(list(nx.get_node_attributes(G,"states").values()))
     state_matrix=np.array(state_matrix)/n
     #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
-    return state_matrix,len(words),entropy
+    return state_matrix,len(words),entropy,len(states)
 
 def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
     print("Starting simulation with "+str(len(doe))+" exp. units each with "+str(sims)+" Monte Carlo simulations: a total of "+str(len(doe)*sims)+" runs...")
@@ -222,6 +223,7 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
         x_isset=False
         word_lens=[]
         entrs=[]
+        state_comps=[]
         for sim in range(sims):
             #within each Monte Carlo simulation
             #we generate a random Watts-Stroggatz Graph with parameter p,n=500
@@ -236,14 +238,19 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
             #place_inc='inc' if np.all(place[1:] >= place[:-1]) else 'dec'
             #promo_inc='inc' if np.all(promo[1:] >= promo[:-1]) else 'dec'
             try:
-                simulation,word_length,entropy=simulate_control(iterations,copy.deepcopy(G),copy.deepcopy(attributes),seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
+                simulation,word_length,entropy,states=simulate_control(iterations,copy.deepcopy(G),copy.deepcopy(attributes),seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
                 diffusion=simulation.sum(axis=0)
                 steadystate=diffusion[-last:]
                 word_lens.append(word_length)
                 entrs.append(entropy.real)
+                state_comps.append(states)
             except ValueError:
                 steadystate=np.zeros((last))
-            lyap=nolds.lyap_e(steadystate)[0]
+            lyap=nolds.lyap_e(steadystate).max()
+            #if not 0 in steadystate:
+            #lyap=np.log(np.absolute(np.diff(steadystate[:-1)+NUM_FLOOR).sum()/len(steadystate)
+            #else:
+            #    lyap=float('inf')
             if lyap !=float('inf') and lyap>max_lyap:
                 max_lyap=lyap
                 x=steadystate
@@ -289,27 +296,30 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
                       #", r_price="+str(round(unit[0],2))+
                       #", r_place="+str(round(unit[0],2))+
                       #", r_promo="+str(round(unit[0],2))+
+                      ", state complexity={:02}".format(max(state_comps))+
                       ", topological entropy={:.1f}".format(round(np.mean(entrs),1))+
                       #", avg_num_words="+str(round(np.mean(word_lens),1))+
                       ", largest lyapunov={:+.1f}".format(round(max_lyap,1))+
                       ", time="+str(round(duration,0))+"s"
                       )
-            print("")
+            #print("")
         else:
             entropies.append((unit[0],entropy.real))
             print(
                       "r={:.4f}".format(round(unit[0], 4))+
+                      
                       #"r="+str(round(unit[0],4))+
                       #"r_prod="+str(round(unit[0],2))+
                       #", r_price="+str(round(unit[0],2))+
                       #", r_place="+str(round(unit[0],2))+
                       #", r_promo="+str(round(unit[0],2))+
+                      ", state complexity={:02}".format(max(state_comps))+
                       ", topological entropy={:.1f}".format(round(np.mean(entrs),1))+
                       #", avg_num_words="+str(round(np.mean(word_lens),1))+
                       ", largest lyapunov=inf"+
                       ", time="+str(round(duration,0))+"s"
                       )
-            print("")
+            #print("")
     return np.array(steadystates),np.array(lyapunovs),np.array(entropies)
 
 launch_mkt_budget=0.5
