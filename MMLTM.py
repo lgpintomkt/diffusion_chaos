@@ -9,11 +9,10 @@ import pandas as pd
 import time
 from pyformlang.regular_expression import Regex
 import cmath
-import math
 import copy
 
 #See Chapter 3 - Sofic Shifts in
-#Lind & Marcus "An Introduction to Symbolic Dynamics and Coding"
+#Lind & Marcus (1995), "An Introduction to Symbolic Dynamics and Coding"
 def symbolic_adjacency_matrix(alphabet,states,transition_function):
     sam=np.zeros([len(states),len(states)])
     for k,symbol in enumerate(alphabet):
@@ -25,11 +24,7 @@ def symbolic_adjacency_matrix(alphabet,states,transition_function):
     return sam
 
 NUM_FLOOR=1e-4
-
-#def chunks(lst, n):
-#    """Yield successive n-sized chunks from lst."""
-#    for i in range(0, len(lst), n):
-#        yield lst[i:i + n]
+MAX_PERIOD=4
 
 def chunks(s, w):
     return [s[i:i + w] for i in range(0, len(s), w)]
@@ -100,7 +95,6 @@ def random_mkt_mix(budget,periods,granularity=1000):
 def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_price=None,r_place=None,r_promo=None,last=25):
     periods=iterations#mkt_mix.shape[1]
     
-    #prods,prices,places,promos=mkt_mix[0,:],mkt_mix[1,:],mkt_mix[2,:],mkt_mix[3,:]
     prods,prices,places,promos=[mkt_mix[0]],[mkt_mix[1]],[mkt_mix[2]],[mkt_mix[3]]
     
     nodes=[n for n in G.nodes]
@@ -118,7 +112,7 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     price_control=demand
     place_control=availability
     promo_control=utility
-    #print("t="+str(0)+" adoption="+str(round(adoption/n,2))+", curr_prod_qual="+str(round(prods[0],2))+", curr_price="+str(round(prices[0],2))+", curr_dist_int="+str(round(places[0],2))+", curr_ad_exp="+str(round(promos[0],2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
+    
     symbols=[]
     for t in range(periods):
         prod_control=1/logistic(prod_control,r_prod)
@@ -137,10 +131,9 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
             else:
                 symbol='L'
             symbols.append(symbol)
-        #if (t%1==0 or t==periods-1) and t>=periods-last:
-        #     print("t="+str(t+1)+" symbol="+symbol+" adoption="+str(state)+", prod_qual="+str(round(prod_control,2))+", price="+str(round(price_control,2))+", dist_int="+str(round(place_control,2))+", ad_exp="+str(round(promo_control,2)))#+" curr_price="+str(round(price_control,2))+" curr_ad_exp="+str(round(promo_control,2))+" cum_ad_exp="+str(round(promo_cost,2)))
+        
         prod,price,place,promo=prod_control,price_control,place_control,promo_control
-        #prod,price,place,promo=prod_control,price_control,place_control,promo_control
+        
         states=dict()
         for node in nodes:
             curr_state=[s for s in G.nodes()[node]['states']]
@@ -155,24 +148,13 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
         cost=(prod_control+place_control+promo_control)
         revenue=(adoption/n)*price_control
         cost_to_revenue=revenue/cost
-        #if previous_state==0 and t<periods-last:
-            #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
-            #raise ValueError
-    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,2)] if len(word)==2]))
-    #words.sort()
-    #print("list of 2-words obtained: "+str(words))
-    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,3)] if len(word)==3]))
-    #words.sort()
-    #print("list of 3-words obtained: "+str(words))
+
     words=[]
-    max_period=4
-    for period in range(1,max_period+1):
+    for period in range(1,MAX_PERIOD+1):
         words+=list(set([''.join(word) for word in [i for i in chunks(symbols,period)] if len(word)==period]))
-    #size=3
-    #words=list(set([''.join(word) for word in [i for i in chunks(symbols,period)] if len(word)==period]))
     words=list(set(words))+list("")
     words.sort()
-    #print("words: "+str(words))
+
     for i,word in enumerate(words):
         words[i]=" ".join(word)
     regex = Regex('|'.join(words))
@@ -185,104 +167,61 @@ def simulate_control(iterations,G,attributes,seed_set_p,mkt_mix,r_prod=None,r_pr
     eigenvals=np.linalg.eigvals(sam)
     max_eigenval=eigenvals.max()
     entropy=cmath.log(max_eigenval)
-    #print("number of DFA states="+str(len(states)))
-    #print(alphabet)
-    #print('Entropy: '+str(round(entropy,2)))
-    
-    #print(str(len(words))+" words of len 4: "+str(words))
+
     state_matrix=np.array(list(nx.get_node_attributes(G,"states").values()))
     state_matrix=np.array(state_matrix)/n
-    #print("t="+str(t+1)+" adoption="+str(previous_state)+" cum_ad_exp="+str(round(promo_cost,2)))
+    
     return state_matrix,len(words),entropy,len(states)
 
-def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
-    print("Starting simulation with "+str(len(doe))+" exp. units each with "+str(sims)+" Monte Carlo simulations: a total of "+str(len(doe)*sims)+" runs...")
+def simulate_system(doe,budget,n,p,seed_set_p,iterations,last):
+    #within each simulation
+    #we generate a random Watts-Stroggatz Graph with parameter p,n=500
+    #we generate a random initial marketing mix within a given launch marketing budget
+    #we generate a random distribution of the thresholds
+    #we generate a random distribution of the budgets
+    print("Starting simulation with "+str(len(doe))+": a total of "+str(len(doe))+" runs...")
     steadystates=[]
     lyapunovs=[]
     entropies=[]
     print("Generating random Watts-Strogatz graph...")
     G=nx.gnp_random_graph(n,p)
-    nodes=G.nodes()
     print("Generating initial seed set, budget, and thresholds...")
     attributes=random_attributes(G,seed_set_p)
     nx.set_node_attributes(G,attributes)
     for unit in doe:
         start = time.time()
-        #r_promo=unit[0]
-        #r_price=unit[1]
+
         r_prod=unit[0]
         r_price=unit[0]
         r_place=unit[0]
         r_promo=unit[0]
-        #p=unit[1]
-        #r_prod=unit[0]
-        #r_price=unit[1]
-        #r_place=unit[2]
-        #r_promo=unit[3]
+
         max_lyap=float('-inf')
         x_isset=False
         word_lens=[]
         entrs=[]
         state_comps=[]
-        for sim in range(sims):
-            #within each Monte Carlo simulation
-            #we generate a random Watts-Stroggatz Graph with parameter p,n=500
-            #we generate a random initial marketing mix within a given launch marketing budget
-            #we generate a random distribution of the thresholds
-            #we generate a random distribution of the budgets
-            mkt_mix=random_mkt_mix(budget,iterations) #generate initial mkt mix
-            #prod,price,place,promo=mkt_mix[0,:],mkt_mix[1,:],mkt_mix[2,:],mkt_mix[3,:]
-            prod,price,place,promo=mkt_mix[0],mkt_mix[1],mkt_mix[2],mkt_mix[3]
-            #prod_inc='inc' if np.all(prod[1:] >= prod[:-1]) else 'dec'
-            #price_inc='inc' if np.all(price[1:] >= price[:-1]) else 'dec'
-            #place_inc='inc' if np.all(place[1:] >= place[:-1]) else 'dec'
-            #promo_inc='inc' if np.all(promo[1:] >= promo[:-1]) else 'dec'
-            try:
-                simulation,word_length,entropy,states=simulate_control(iterations,copy.deepcopy(G),copy.deepcopy(attributes),seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
-                diffusion=simulation.sum(axis=0)
-                steadystate=diffusion[-last:]
-                word_lens.append(word_length)
-                entrs.append(entropy.real)
-                state_comps.append(states)
-            except ValueError:
-                steadystate=np.zeros((last))
-            lyap=nolds.lyap_e(steadystate).max()
-            #if not 0 in steadystate:
-            #lyap=np.log(np.absolute(np.diff(steadystate[:-1)+NUM_FLOOR).sum()/len(steadystate)
-            #else:
-            #    lyap=float('inf')
-            if lyap !=float('inf') and lyap>max_lyap:
-                max_lyap=lyap
-                x=steadystate
-                x_isset=True
-            # if lyap != float('inf') and max_lyap != float('-inf'): #check if lyapunov exponent is finite
-            #     print(
-            #           "r="+str(round(unit[0],2))+
-            #           #", r_price="+str(round(unit[0],2))+
-            #           #", r_place="+str(round(unit[1],2))+
-            #           #", r_promo="+str(round(unit[1],2))+
-            #           #", p="+str(round(p,4))+
-            #           ", sim="+str(sim+1)+
-            #           #", prod_qual="+prod_inc+
-            #           #", price_level="+price_inc+
-            #           #", dist_intensity="+place_inc+
-            #           #", promo_exp="+promo_inc+
-            #           ", run. max lyapunov="+str(round(np.max([lyap,max_lyap]),2))
-            #           )
-            # else:
-            #     print(
-            #           "r="+str(round(unit[0],2))+
-            #           #", r_price="+str(round(unit[0],2))+
-            #           #", r_place="+str(round(unit[1],2))+
-            #           #", r_promo="+str(round(unit[1],2))+
-            #           #", p="+str(round(p,4))+
-            #           ", sim="+str(sim+1)+
-            #           #", prod_qual="+prod_inc+
-            #           #", price_level="+price_inc+
-            #           #", dist_intensity="+place_inc+
-            #           #", promo_exp="+promo_inc+
-            #           ", inf. lyapunov"
-            #           )
+        
+        mkt_mix=random_mkt_mix(budget,iterations) #generate initial mkt mix
+
+        try:
+            simulation,word_length,entropy,states=simulate_control(iterations,copy.deepcopy(G),copy.deepcopy(attributes),seed_set_p,mkt_mix,r_prod,r_price,r_place,r_promo,last)
+            diffusion=simulation.sum(axis=0)
+            steadystate=diffusion[-last:]
+            word_lens.append(word_length)
+            entrs.append(entropy.real)
+            state_comps.append(states)
+        except ValueError:
+            steadystate=np.zeros((last))
+        #Using the 1986 Eckmann and Kamphorst algorithm to estimate the Lyapunov Exponent
+        #See https://www.ihes.fr/~/ruelle/PUBLICATIONS/%5B86%5D.pdf
+        lyap=nolds.lyap_e(steadystate).max()
+
+        if lyap !=float('inf') and lyap>max_lyap:
+            max_lyap=lyap
+            x=steadystate
+            x_isset=True
+
         stop = time.time()
         duration = stop-start
         if x_isset:
@@ -291,64 +230,42 @@ def simulate_system(doe,budget,n,p,seed_set_p,iterations,sims,last):
             entropies.append((unit[0],entropy.real))
             print(
                       "r={:.4f}".format(round(unit[0], 4))+
-                      #"r="+str(round(unit[0],4))+
-                      #"r_prod="+str(round(unit[0],2))+
-                      #", r_price="+str(round(unit[0],2))+
-                      #", r_place="+str(round(unit[0],2))+
-                      #", r_promo="+str(round(unit[0],2))+
                       ", state complexity={:02}".format(max(state_comps))+
                       ", topological entropy={:.1f}".format(round(np.mean(entrs),1))+
-                      #", avg_num_words="+str(round(np.mean(word_lens),1))+
                       ", largest lyapunov={:+.1f}".format(round(max_lyap,1))+
-                      ", time="+str(round(duration,0))+"s"
+                      ", time="+str(round(duration,0))+"s"+
+                      (", chaotic orbit." if max_lyap>0 else ", stable orbit.")
                       )
-            #print("")
         else:
             entropies.append((unit[0],entropy.real))
             print(
                       "r={:.4f}".format(round(unit[0], 4))+
-                      
-                      #"r="+str(round(unit[0],4))+
-                      #"r_prod="+str(round(unit[0],2))+
-                      #", r_price="+str(round(unit[0],2))+
-                      #", r_place="+str(round(unit[0],2))+
-                      #", r_promo="+str(round(unit[0],2))+
                       ", state complexity={:02}".format(max(state_comps))+
                       ", topological entropy={:.1f}".format(round(np.mean(entrs),1))+
-                      #", avg_num_words="+str(round(np.mean(word_lens),1))+
-                      ", largest lyapunov=inf"+
-                      ", time="+str(round(duration,0))+"s"
+                      ", largest lyapunov=-inf"+
+                      ", time="+str(round(duration,0))+"s"+
+                      ", superstable orbit."
                       )
-            #print("")
+
     return np.array(steadystates),np.array(lyapunovs),np.array(entropies)
 
 launch_mkt_budget=0.5
-n=300          #graph network size
-seed_set_p=0.05#seed set size
-iterations=250  #diffusion iterations
-simulations=1  #Monte Carlo simulations within each DoE unit
-last=50         #steadystate size
-r_levels=10000    #r factor levels
-p_levels=1     #p factor levels
+n=300                   #graph network size
+seed_set_p=0.05         #seed set size
+iterations=250          #diffusion iterations
+last=50                 #steadystate size
+r_levels=10000          #r factor levels
+p_levels=1              #p factor levels
 r = np.linspace(2, 4, r_levels)
-r_prod  = np.linspace(2.5, 4.0, r_levels)
-r_price = np.linspace(2.5, 4.0, r_levels)
-r_place = np.linspace(2.5, 4.0, r_levels)
-r_promo = np.linspace(2.5, 4.0, r_levels)
-p = 0.01#np.linspace(0.01, 0.01, p_levels)
 
-#     'r_prod':r_prod,
-#     'r_price':r_price,
-#     'r_place':r_place,
-#     'r_promo':r_promo,
+p = 0.01
 
 doe=build.full_fact({
     'r':r,
-    #'p':p
      }).values.tolist()
 #np.random.shuffle(doe)
 
-steadystates,lyapunovs,entropies = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,simulations,last)
+steadystates,lyapunovs,entropies = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,last)
 steadystates=steadystates[steadystates[:, 0].argsort()]
 lyapunovs=lyapunovs[lyapunovs[:,0].argsort()]
 rows=steadystates.shape[0]
