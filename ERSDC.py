@@ -67,20 +67,17 @@ def ngm_sum(node, G, prod_qual):
 
 def influence(node, G, prod, place, promo, wom):
     if wom:
-        influence = ngm_sum(node, G, prod) * place * promo
+        return ngm_sum(node, G, prod) * place * promo
     else:
-        influence = place * promo
-    return influence
+        return place * promo
 
 def activation(node, G, prod, price, place, promo, wom=True):
     na = G.nodes()[node]
     threshold, budget = na['threshold'], na['budget']
     inf = influence(node, G, prod, place, promo, wom)
     if inf >= threshold and budget >= price:
-        active = 1
-    else:
-        active = 0
-    return active
+        return 1
+    return 0
 
 def random_mkt_mix(budget, periods, granularity=1000):
     exp = float('inf')
@@ -94,14 +91,12 @@ def random_mkt_mix(budget, periods, granularity=1000):
     mkt_mix = np.array(mkt_mix) + NUM_FLOOR
     return mkt_mix
 
-# --- Adapted Epoch Simulation using exact original equations ---
 def simulate_epoch_control(G, attributes, mkt_vars, r_val, epoch_length):
     n = G.number_of_nodes()
     prod_control, price_control, place_control, promo_control = mkt_vars
     nodes = list(G.nodes)
     
     epoch_adoptions = []
-    symbols = []
     
     for t in range(epoch_length):
         prod_control = 1 / logistic(prod_control, r_val)
@@ -112,14 +107,6 @@ def simulate_epoch_control(G, attributes, mkt_vars, r_val, epoch_length):
         adoption = np.sum([st[-1] for st in nx.get_node_attributes(G, 'states').values()])
         adoption_rate = adoption / n
         epoch_adoptions.append(adoption_rate)
-        
-        if adoption_rate > 0.5:
-            symbol = 'R'
-        elif adoption_rate > 0.0:
-            symbol = 'L'
-        else:
-            symbol = 'C'
-        symbols.append(symbol)
         
         prod, price, place, promo = prod_control, price_control, place_control, promo_control
         
@@ -146,9 +133,71 @@ def simulate_epoch_control(G, attributes, mkt_vars, r_val, epoch_length):
     updated_mkt_vars = (prod_control, price_control, place_control, promo_control)
     return G, updated_mkt_vars, epoch_adoptions
 
-# --- Online ERSDC Control Framework with Interior Mean-Reversion ---
+def build_regional_dictionaries(word_length=3, m_bins=3):
+    print("Building offline regional symbolic dictionaries (Phase 1)...")
+    regions = {'A': 2.1, 'B': 2.4, 'CD': 2.7, 'FE': 3.2, 'G': 3.6, 'FE_HIGH': 3.85}
+    G_dummy = nx.gnp_random_graph(100, 0.05)
+    attr_dummy = random_attributes(G_dummy)
+    nx.set_node_attributes(G_dummy, attr_dummy)
+    
+    dictionaries = {}
+    for reg, r_rep in regions.items():
+        mkt_mix = random_mkt_mix(0.5, 10)
+        mkt_vars = (mkt_mix[0], mkt_mix[1], mkt_mix[2], mkt_mix[3])
+        _, _, adoptions = simulate_epoch_control(G_dummy, attr_dummy, mkt_vars, r_rep, epoch_length=150)
+        
+        bins = np.linspace(0, 1, m_bins + 1)
+        symbols = np.digitize(adoptions, bins) - 1
+        symbols = np.clip(symbols, 0, m_bins - 1)
+        
+        word_counts = {}
+        total_words = 0
+        for i in range(len(symbols) - word_length + 1):
+            word = tuple(symbols[i:i+word_length])
+            word_counts[word] = word_counts.get(word, 0) + 1
+            total_words += 1
+            
+        prob_dist = {}
+        vocab_size = m_bins ** word_length
+        for w_idx in range(vocab_size):
+            w_tuple = tuple(int(x) for x in np.base_repr(w_idx, base=m_bins, padding=word_length).zfill(word_length))
+            prob_dist[w_tuple] = (word_counts.get(w_tuple, 0) + 1.0) / (total_words + vocab_size)
+            
+        dictionaries[reg] = prob_dist
+    print("Offline dictionaries constructed successfully.\n")
+    return dictionaries, m_bins
 
-def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_length=15, r_init=2.2, r_star=3.6, eta=1.0):
+def infer_region_bayes(epoch_adoptions, dictionaries, word_length=3, m_bins=3):
+    recent_adpt = epoch_adoptions[-word_length:] if len(epoch_adoptions) >= word_length else epoch_adoptions
+    if len(recent_adpt) < word_length:
+        recent_adpt = [0.0] * (word_length - len(recent_adpt)) + recent_adpt
+        
+    bins = np.linspace(0, 1, m_bins + 1)
+    symbols = np.digitize(recent_adpt, bins) - 1
+    symbols = tuple(np.clip(symbols, 0, m_bins - 1))
+    
+    regions = list(dictionaries.keys())
+    p_prior = 1.0 / len(regions)
+    posteriors = {}
+    evidence = 0.0
+    for reg in regions:
+        p_word_given_r = dictionaries[reg].get(symbols, 1e-6)
+        posterior_unnormalized = p_word_given_r * p_prior
+        posteriors[reg] = posterior_unnormalized
+        evidence += posterior_unnormalized
+    for reg in regions:
+        posteriors[reg] /= evidence
+    return max(posteriors, key=posteriors.get), posteriors
+
+def find_stabilization_step(r_trajectory, target_min=3.5, target_max=3.7):
+    """Finds the first epoch index where r enters the target zone and stays there."""
+    for i in range(len(r_trajectory)):
+        if target_min <= r_trajectory[i] <= target_max:
+            if all(target_min <= val <= target_max for val in r_trajectory[i:]):
+                return i
+    return None
+
+def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, dictionaries, word_length, m_bins, K_epochs=30, epoch_length=15, r_init=2.2, h_target=0.45, eta=1.0):
     G = nx.gnp_random_graph(n, p)
     attributes = random_attributes(G, seed_set_p)
     nx.set_node_attributes(G, attributes)
@@ -172,100 +221,97 @@ def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_l
     r_trajectory = [r_current]
     full_adoptions = []
     
-    delta_macro = 0.4
-    delta_local = 0.05
-    A_min = 0.02  # Survival margin threshold
+    delta_macro = 0.3
+    delta_local = 0.04
+    A_min = 0.02
     
     for k in range(K_epochs):
         G, mkt_vars, epoch_adoptions = simulate_epoch_control(G, attributes, mkt_vars, r_current, epoch_length)
         full_adoptions.extend(epoch_adoptions)
         
-        try:
-            lyap = nolds.lyap_e(np.array(epoch_adoptions)).max()
-        except:
-            lyap = 0.0
-            
-        # Regional classification based on bifurcation parameter r
-        if r_current < 2.3:
-            estimated_region = 'A'
-        elif r_current < 2.5:
-            estimated_region = 'B'
-        elif r_current < 2.8:
-            estimated_region = 'CD'
-        elif r_current < 3.5:
-            estimated_region = 'FE'
-        else:
-            estimated_region = 'G'
-            
         mean_adoption = np.mean(epoch_adoptions)
-        
-        # Policy logic matching Algorithm 1 and Theorem 6.1 updates
-        if mean_adoption < A_min:
-            action = delta_macro  # Extinction safeguard shift (aggressive recovery jump)
-        elif lyap > 0.05 or estimated_region in ['A', 'FE']:
-            action = choice([-delta_local, delta_local])  # Chaos mitigation shift
-        elif estimated_region != 'G':
-            action = delta_macro  # Macro-jump directed toward region G
-        else:
-            # Interior mean-reversion attractor inside Region G (pulls toward r*)
-            action = -eta * np.sign(r_current - r_star) * delta_local
+        try:
+            htop = float(nolds.sampen(np.array(epoch_adoptions)))
+            if np.isnan(htop) or np.isinf(htop):
+                htop = h_target
+        except:
+            htop = h_target
             
-        r_current = np.clip(r_current + action, 2.0, 4.0)
+        estimated_region, _ = infer_region_bayes(epoch_adoptions, dictionaries, word_length, m_bins)
+            
+        if mean_adoption < A_min:
+            action = delta_macro
+        else:
+            entropy_error = htop - h_target
+            action = -eta * np.sign(entropy_error) * delta_local
+            
+        r_current = np.clip(r_current + action, 2.1, 3.7)
         r_trajectory.append(r_current)
         
     return r_trajectory, full_adoptions
 
-def run_monte_carlo(num_runs=20):
-    print(f"Running Monte Carlo evaluation with {num_runs} independent trajectories (with interior stabilization)...")
+def run_monte_carlo(num_runs=10):
+    word_length = 3
+    m_bins = 3
+    dictionaries, m_bins = build_regional_dictionaries(word_length, m_bins)
+    
+    print(f"Running Monte Carlo evaluation with {num_runs} independent trajectories (Tracking Stabilization Steps)...")
     success_count = 0
+    stabilization_steps = []
     results = []
-    r_star = 3.6
     
     for run in range(num_runs):
-        r_init = uniform(2.0, 2.7)
+        r_init = uniform(2.1, 2.6)
         r_traj, adpt_traj = run_ersdc_control_loop(
             n=200, p=0.03, seed_set_p=0.05, launch_budget=0.5, 
-            K_epochs=25, epoch_length=15, r_init=r_init, r_star=r_star
+            dictionaries=dictionaries, word_length=word_length, m_bins=m_bins,
+            K_epochs=30, epoch_length=15, r_init=r_init, h_target=0.45
         )
         
         final_r = r_traj[-1]
-        reached_golden = (final_r >= 3.5)
-        stabilized_near_target = (abs(final_r - r_star) <= 0.3)
         survived = (np.mean(adpt_traj) > 0.0)
+        stab_step = find_stabilization_step(r_traj)
         
+        reached_golden = (stab_step is not None)
         if survived and reached_golden:
             success_count += 1
+            stabilization_steps.append(stab_step)
             
         results.append({
             'run': run,
             'survived': survived,
             'final_r': final_r,
-            'reached_golden': reached_golden,
+            'stabilization_step': stab_step,
             'r_trajectory': r_traj
         })
-        print(f"Run {run+1}/{num_runs} | Initial r: {r_init:.2f} | Final r: {final_r:.2f} | Survived: {survived} | Reached Golden (G): {reached_golden}")
+        
+        step_str = f"Epoch {stab_step}" if stab_step is not None else "Did not stabilize"
+        print(f"Run {run+1}/{num_runs} | Initial r: {r_init:.2f} | Final r: {final_r:.2f} | Stabilized at: {step_str}")
 
+    avg_steps = np.mean(stabilization_steps) if stabilization_steps else float('nan')
     print(f"\nMonte Carlo Summary:")
     print(f"Total Runs: {num_runs}")
-    print(f"Success Rate (Survived & Reached Region G): {(success_count / num_runs) * 100:.1f}%")
+    print(f"Success Rate (Target Golden Zone): {(success_count / num_runs) * 100:.1f}%")
+    print(f"Average Steps to Stabilization: {avg_steps:.1f} epochs")
     return results
 
 if __name__ == "__main__":
-    mc_results = run_monte_carlo(num_runs=20)
+    mc_results = run_monte_carlo(num_runs=10)
     
     plt.figure(figsize=(10, 6))
     for res in mc_results:
-        plt.plot(res['r_trajectory'], color='blue', alpha=0.3)
+        plt.plot(res['r_trajectory'], color='blue', alpha=0.5)
         
-    plt.axhline(y=3.5, color='orange', linestyle='--', label='Golden Region Boundary ($r = 3.5$)')
-    plt.axhline(y=3.6, color='red', linestyle=':', label='Interior Target ($r^* = 3.6$)')
-    plt.axhspan(3.5, 4.0, color='orange', alpha=0.1, label='Target Golden Zone')
+    plt.axhline(y=3.5, color='orange', linestyle='--', label='Golden Region Lower Bound ($r = 3.5$)')
+    plt.axhline(y=3.7, color='orange', linestyle=':', label='Golden Region Upper Bound ($r = 3.7$)')
+    plt.axhline(y=3.6, color='red', linestyle='-', label='Interior Target ($r^* = 3.6$)')
+    plt.axhspan(3.5, 3.7, color='orange', alpha=0.1, label='Target Golden Zone')
     
-    plt.xlim(0, 25)
-    plt.ylim(2.0, 4.0)
+    plt.xlim(0, 30)
+    plt.ylim(2.0, 3.9)
     plt.xlabel("Control Epochs ($k$)")
     plt.ylabel("Bifurcation Parameter ($r_k$)")
-    plt.title("Monte Carlo Control Trajectories using ERSDC with Interior Mean-Reversion")
+    plt.title("Blind ERSDC Trajectories with Stabilization Tracking")
     plt.legend(loc='lower right')
     plt.tight_layout()
     plt.show()
