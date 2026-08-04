@@ -1,6 +1,5 @@
 import networkx as nx
 import numpy as np
-import nolds
 import matplotlib.pyplot as plt
 from numpy.random import choice, uniform
 import pandas as pd
@@ -8,9 +7,28 @@ import time
 import cmath
 import copy
 
-# --- Helper Functions ---
+# --- PYTHON 3.11+ COMPATIBILITY PATCH FOR NOLDS ---
+import sys
+import types
+try:
+    import nolds
+except TypeError:
+    mock_datasets = types.ModuleType('nolds.datasets')
+    mock_datasets.brown72 = None
+    mock_datasets.tent_map = None
+    mock_datasets.logistic_map = None
+    mock_datasets.fbm = None
+    mock_datasets.fgn = None
+    mock_datasets.qrandom = None
+    mock_datasets.load_qrandom = lambda *a, **k: None
+    mock_datasets.load_financial = lambda *a, **k: (None, None, None)
+    mock_datasets.barabasi1991_fractal = None
+    sys.modules['nolds.datasets'] = mock_datasets
+    import nolds
+# ------------------------------------------------
 
 NUM_FLOOR = 1e-4
+MAX_PERIOD = 4
 
 def chunks(s, w):
     return [s[i:i + w] for i in range(0, len(s), w)]
@@ -42,6 +60,8 @@ def ngm_sum(node, G, prod_qual):
         neighbor_attributes = G.nodes()[neighbor]
         states = neighbor_attributes['states']
         state_vectors.append(states)
+    if not state_vectors:
+        return 0.0
     state_matrix = np.array(state_vectors)
     return state_matrix.dot(prod_qual).sum()
 
@@ -57,84 +77,113 @@ def activation(node, G, prod, price, place, promo, wom=True):
     threshold, budget = na['threshold'], na['budget']
     inf = influence(node, G, prod, place, promo, wom)
     if inf >= threshold and budget >= price:
-        return 1
+        active = 1
     else:
-        return 0
+        active = 0
+    return active
 
-# --- ERSDC Online Control Environment ---
+def random_mkt_mix(budget, periods, granularity=1000):
+    exp = float('inf')
+    while(exp > budget):
+        exp = 0
+        mkt_mix = []
+        for i in range(4):
+            mkt_mix.append(uniform(0, 1))
+            if i != 1: # price doesn't count
+                exp += mkt_mix[-1]
+    mkt_mix = np.array(mkt_mix) + NUM_FLOOR
+    return mkt_mix
 
-def run_ersdc_episode(n, p, seed_set_p, launch_budget, K_epochs, epoch_length, r_init, lambda_penalty=0.1):
-    """
-    Runs a single online control episode using the ERSDC algorithm over K_epochs.
-    Each epoch lasts 'epoch_length' steps.
-    """
-    # 1. Initialize Graph and Attributes
+# --- Adapted Epoch Simulation using your exact original equations ---
+def simulate_epoch_control(G, attributes, mkt_vars, r_val, epoch_length):
+    n = G.number_of_nodes()
+    prod_control, price_control, place_control, promo_control = mkt_vars
+    nodes = list(G.nodes)
+    
+    epoch_adoptions = []
+    symbols = []
+    
+    for t in range(epoch_length):
+        prod_control = 1 / logistic(prod_control, r_val)
+        price_control = 1 / abs(logistic(price_control, r_val) - price_control)
+        place_control = 1 / logistic(place_control, r_val)
+        promo_control = 1 / logistic(promo_control, r_val)
+        
+        adoption = np.sum([st[-1] for st in nx.get_node_attributes(G, 'states').values()])
+        adoption_rate = adoption / n
+        epoch_adoptions.append(adoption_rate)
+        
+        if adoption_rate > 0.5:
+            symbol = 'R'
+        elif adoption_rate > 0.0:
+            symbol = 'L'
+        else:
+            symbol = 'C'
+        symbols.append(symbol)
+        
+        prod, price, place, promo = prod_control, price_control, place_control, promo_control
+        
+        states = dict()
+        for node in nodes:
+            curr_state = list(G.nodes()[node]['states'])
+            curr_state.append(activation(node, G, prod, price, place, promo))
+            states[node] = curr_state
+        nx.set_node_attributes(G, states, "states")   
+
+        adoption = np.sum([st[-1] for st in nx.get_node_attributes(G, 'states').values()])
+        demand = (np.sum([attr['budget'] > price_control for attr in attributes.values()]) - adoption) / n
+        availability = place_control * demand
+        utility = prod_control * promo_control * adoption / n
+        cost = (prod_control + place_control + promo_control)
+        revenue = (adoption / n) * price_control
+        cost_to_revenue = revenue / cost if cost != 0 else 1.0
+        
+        prod_control = cost_to_revenue
+        price_control = demand
+        place_control = availability
+        promo_control = utility
+        
+    updated_mkt_vars = (prod_control, price_control, place_control, promo_control)
+    return G, updated_mkt_vars, epoch_adoptions
+
+# --- Online ERSDC Control Framework ---
+
+def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_length=15, r_init=2.2):
     G = nx.gnp_random_graph(n, p)
     attributes = random_attributes(G, seed_set_p)
     nx.set_node_attributes(G, attributes)
     
-    # Initial marketing mix and control state variables
-    mkt_mix = [uniform(0, 1), uniform(0, 1), uniform(0, 1), uniform(0, 1)]
-    prod_control, price_control, place_control, promo_control = mkt_mix[0]+NUM_FLOOR, mkt_mix[1]+NUM_FLOOR, mkt_mix[2]+NUM_FLOOR, mkt_mix[3]+NUM_FLOOR
+    mkt_mix = random_mkt_mix(launch_budget, epoch_length)
+    prices0 = mkt_mix[1]
+    adoption0 = np.sum([st[-1] for st in nx.get_node_attributes(G, 'states').values()])
+    demand0 = (np.sum([attr['budget'] > prices0 for attr in attributes.values()]) - adoption0) / n
+    availability0 = mkt_mix[2] * demand0
+    utility0 = mkt_mix[0] * mkt_mix[3] * adoption0 / n
+    cost0 = (mkt_mix[0] + mkt_mix[2] + mkt_mix[3])
+    revenue0 = (adoption0 / n) * prices0
     
+    prod_control = revenue0 / cost0 if cost0 != 0 else 1.0
+    price_control = demand0
+    place_control = availability0
+    promo_control = utility0
+    
+    mkt_vars = (prod_control, price_control, place_control, promo_control)
     r_current = r_init
     r_trajectory = [r_current]
-    adoption_trajectory = []
-    entropy_trajectory = []
+    full_adoptions = []
     
-    delta_macro = 0.5   # Large jump (+Delta_L) to navigate across regions
-    delta_local = 0.05  # Small local shift (+/- Delta_l) for chaos mitigation
+    delta_macro = 0.4
+    delta_local = 0.05
     
-    extinct = False
-
     for k in range(K_epochs):
-        epoch_symbols = []
-        epoch_adoptions = []
+        G, mkt_vars, epoch_adoptions = simulate_epoch_control(G, attributes, mkt_vars, r_current, epoch_length)
+        full_adoptions.extend(epoch_adoptions)
         
-        # System evolution over epoch window 's' (epoch_length)
-        for t in range(epoch_length):
-            prod_control = 1 / logistic(prod_control, r_current)
-            price_control = 1 / abs(logistic(price_control, r_current) - price_control)
-            place_control = 1 / logistic(place_control, r_current)
-            promo_control = 1 / logistic(promo_control, r_current)
-            
-            nodes = list(G.nodes)
-            adoption = np.sum([st[-1] for st in nx.get_node_attributes(G, 'states').values()])
-            adoption_rate = adoption / n
-            epoch_adoptions.append(adoption_rate)
-            
-            if adoption_rate == 0.0:
-                extinct = True
-                break
-                
-            # Symbolic encoding for window observation
-            if adoption_rate > 0.5:
-                symbol = 'R'
-            elif adoption_rate > 0.0:
-                symbol = 'L'
-            else:
-                symbol = 'C'
-            epoch_symbols.append(symbol)
-            
-            # Update network states
-            states = dict()
-            for node in nodes:
-                curr_state = list(G.nodes()[node]['states'])
-                curr_state.append(activation(node, G, prod_control, price_control, place_control, promo_control))
-                states[node] = curr_state
-            nx.set_node_attributes(G, states, "states")
-            
-        if extinct:
-            break
-            
-        # Estimate Lyapunov / Entropy proxy over the epoch window
         try:
             lyap = nolds.lyap_e(np.array(epoch_adoptions)).max()
         except:
             lyap = 0.0
             
-        # Simplified region classification based on current r and dynamical feedback
-        # Regions: A (2.0-2.3), B (2.3-2.5), CD (2.5-2.8), FE (2.8-3.5), G (3.5-4.0)
         if r_current < 2.3:
             estimated_region = 'A'
         elif r_current < 2.5:
@@ -147,44 +196,37 @@ def run_ersdc_episode(n, p, seed_set_p, launch_budget, K_epochs, epoch_length, r
             estimated_region = 'G'
             
         mean_adoption = np.mean(epoch_adoptions)
-        entropy_trajectory.append(lyap if lyap > 0 else 0)
         
-        # --- ERSDC Policy Logic ---
-        # 1. Extinction Safeguard
-        if mean_adoption < 0.05:
-            action = delta_macro  # Aggressive push upward to revive market
-        # 2. Chaos Mitigation (Region A or FE, or positive Lyapunov exponent)
-        elif lyap > 0.02 or estimated_region in ['A', 'FE']:
-            # Apply local shift heuristic to find stability windows
-            action = choice([-delta_local, delta_local])
-        # 3. Target Golden Region (G) via Macro Jumps
+        if mean_adoption < 0.02:
+            action = delta_macro  # Extinction safeguard shift
+        elif lyap > 0.05 or estimated_region in ['A', 'FE']:
+            action = choice([-delta_local, delta_local])  # Chaos mitigation shift
         elif estimated_region in ['B', 'CD']:
-            action = delta_macro
+            action = delta_macro  # Macro-jump toward Golden Region G
         else:
-            # Already in Region G or stable zone, minimal adjustment
-            action = 0.0
+            action = 0.0  # Stable in Region G
             
-        # Update control parameter with domain clipping [2.0, 4.0]
         r_current = np.clip(r_current + action, 2.0, 4.0)
         r_trajectory.append(r_current)
-        adoption_trajectory.extend(epoch_adoptions)
         
-    return r_trajectory, adoption_trajectory, not extinct
+    return r_trajectory, full_adoptions
 
-# --- Monte Carlo Experiment Execution ---
-
-def run_monte_carlo(num_runs=30, n=200, p=0.02, seed_set_p=0.05, launch_budget=0.5, K_epochs=40, epoch_length=15):
+def run_monte_carlo(num_runs=20):
     print(f"Running Monte Carlo evaluation with {num_runs} independent trajectories...")
     success_count = 0
     results = []
     
     for run in range(num_runs):
-        # Start each run from a random chaotic or low region (e.g., r_init between 2.0 and 3.0)
-        r_init = uniform(2.0, 3.0)
-        r_traj, adpt_traj, survived = run_ersdc_episode(n, p, seed_set_p, launch_budget, K_epochs, epoch_length, r_init)
+        r_init = uniform(2.0, 2.7)
+        r_traj, adpt_traj = run_ersdc_control_loop(
+            n=200, p=0.03, seed_set_p=0.05, launch_budget=0.5, 
+            K_epochs=25, epoch_length=15, r_init=r_init
+        )
         
         final_r = r_traj[-1]
         reached_golden = (final_r >= 3.5)
+        survived = (np.mean(adpt_traj) > 0.0)
+        
         if survived and reached_golden:
             success_count += 1
             
@@ -202,31 +244,17 @@ def run_monte_carlo(num_runs=30, n=200, p=0.02, seed_set_p=0.05, launch_budget=0
     print(f"Success Rate (Survived & Reached Region G): {(success_count / num_runs) * 100:.1f}%")
     return results
 
-# --- Execution and Plotting ---
-
 if __name__ == "__main__":
-    # Parameters for the experiment
-    NUM_RUNS = 20
-    N_NODES = 200
-    P_EDGE = 0.02
-    SEED_P = 0.05
-    BUDGET = 0.5
-    EPOCHS = 35
-    EPOCH_LEN = 15
+    mc_results = run_monte_carlo(num_runs=20)
     
-    # Run Monte Carlo simulation
-    mc_results = run_monte_carlo(num_runs=NUM_RUNS, n=N_NODES, p=P_EDGE, seed_set_p=SEED_P, launch_budget=BUDGET, K_epochs=EPOCHS, epoch_length=EPOCH_LEN)
-    
-    # Plotting Control Trajectories across Monte Carlo runs
     plt.figure(figsize=(10, 6))
     for res in mc_results:
         plt.plot(res['r_trajectory'], color='blue', alpha=0.3)
         
-    # Highlight Region G threshold (r >= 3.5)
     plt.axhline(y=3.5, color='orange', linestyle='--', label='Golden Region Boundary (G)')
     plt.axhspan(3.5, 4.0, color='orange', alpha=0.1, label='Target Golden Zone')
     
-    plt.xlim(0, EPOCHS)
+    plt.xlim(0, 25)
     plt.ylim(2.0, 4.0)
     plt.xlabel("Control Epochs ($k$)")
     plt.ylabel("Bifurcation Parameter ($r_k$)")

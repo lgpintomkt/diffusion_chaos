@@ -1,15 +1,34 @@
 import networkx as nx
 import numpy as np
-import nolds
 import matplotlib.pyplot as plt
 from numpy.random import choice
 from numpy.random import uniform
-from doepy import build
+import pyDOE2 as build
 import pandas as pd
 import time
 from pyformlang.regular_expression import Regex
 import cmath
 import copy
+
+# --- PYTHON 3.11+ COMPATIBILITY PATCH FOR NOLDS ---
+import sys
+import types
+try:
+    import nolds
+except TypeError:
+    mock_datasets = types.ModuleType('nolds.datasets')
+    mock_datasets.brown72 = None
+    mock_datasets.tent_map = None
+    mock_datasets.logistic_map = None
+    mock_datasets.fbm = None
+    mock_datasets.fgn = None
+    mock_datasets.qrandom = None
+    mock_datasets.load_qrandom = lambda *a, **k: None
+    mock_datasets.load_financial = lambda *a, **k: (None, None, None)
+    mock_datasets.barabasi1991_fractal = None
+    sys.modules['nolds.datasets'] = mock_datasets
+    import nolds
+# ------------------------------------------------
 
 #See Chapter 3 - Sofic Shifts in
 #Lind & Marcus (1995), "An Introduction to Symbolic Dynamics and Coding"
@@ -260,9 +279,7 @@ r = np.linspace(2, 4, r_levels)
 
 p = 0.01
 
-doe=build.full_fact({
-    'r':r,
-     }).values.tolist()
+doe = [[ri] for ri in r]
 #np.random.shuffle(doe)
 
 steadystates,lyapunovs,entropies = simulate_system(doe,launch_mkt_budget,n,p,seed_set_p,iterations,last)
