@@ -94,7 +94,7 @@ def random_mkt_mix(budget, periods, granularity=1000):
     mkt_mix = np.array(mkt_mix) + NUM_FLOOR
     return mkt_mix
 
-# --- Adapted Epoch Simulation using your exact original equations ---
+# --- Adapted Epoch Simulation using exact original equations ---
 def simulate_epoch_control(G, attributes, mkt_vars, r_val, epoch_length):
     n = G.number_of_nodes()
     prod_control, price_control, place_control, promo_control = mkt_vars
@@ -146,9 +146,9 @@ def simulate_epoch_control(G, attributes, mkt_vars, r_val, epoch_length):
     updated_mkt_vars = (prod_control, price_control, place_control, promo_control)
     return G, updated_mkt_vars, epoch_adoptions
 
-# --- Online ERSDC Control Framework ---
+# --- Online ERSDC Control Framework with Interior Mean-Reversion ---
 
-def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_length=15, r_init=2.2):
+def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_length=15, r_init=2.2, r_star=3.6, eta=1.0):
     G = nx.gnp_random_graph(n, p)
     attributes = random_attributes(G, seed_set_p)
     nx.set_node_attributes(G, attributes)
@@ -174,6 +174,7 @@ def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_l
     
     delta_macro = 0.4
     delta_local = 0.05
+    A_min = 0.02  # Survival margin threshold
     
     for k in range(K_epochs):
         G, mkt_vars, epoch_adoptions = simulate_epoch_control(G, attributes, mkt_vars, r_current, epoch_length)
@@ -184,6 +185,7 @@ def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_l
         except:
             lyap = 0.0
             
+        # Regional classification based on bifurcation parameter r
         if r_current < 2.3:
             estimated_region = 'A'
         elif r_current < 2.5:
@@ -197,14 +199,16 @@ def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_l
             
         mean_adoption = np.mean(epoch_adoptions)
         
-        if mean_adoption < 0.02:
-            action = delta_macro  # Extinction safeguard shift
+        # Policy logic matching Algorithm 1 and Theorem 6.1 updates
+        if mean_adoption < A_min:
+            action = delta_macro  # Extinction safeguard shift (aggressive recovery jump)
         elif lyap > 0.05 or estimated_region in ['A', 'FE']:
             action = choice([-delta_local, delta_local])  # Chaos mitigation shift
-        elif estimated_region in ['B', 'CD']:
-            action = delta_macro  # Macro-jump toward Golden Region G
+        elif estimated_region != 'G':
+            action = delta_macro  # Macro-jump directed toward region G
         else:
-            action = 0.0  # Stable in Region G
+            # Interior mean-reversion attractor inside Region G (pulls toward r*)
+            action = -eta * np.sign(r_current - r_star) * delta_local
             
         r_current = np.clip(r_current + action, 2.0, 4.0)
         r_trajectory.append(r_current)
@@ -212,19 +216,21 @@ def run_ersdc_control_loop(n, p, seed_set_p, launch_budget, K_epochs=30, epoch_l
     return r_trajectory, full_adoptions
 
 def run_monte_carlo(num_runs=20):
-    print(f"Running Monte Carlo evaluation with {num_runs} independent trajectories...")
+    print(f"Running Monte Carlo evaluation with {num_runs} independent trajectories (with interior stabilization)...")
     success_count = 0
     results = []
+    r_star = 3.6
     
     for run in range(num_runs):
         r_init = uniform(2.0, 2.7)
         r_traj, adpt_traj = run_ersdc_control_loop(
             n=200, p=0.03, seed_set_p=0.05, launch_budget=0.5, 
-            K_epochs=25, epoch_length=15, r_init=r_init
+            K_epochs=25, epoch_length=15, r_init=r_init, r_star=r_star
         )
         
         final_r = r_traj[-1]
         reached_golden = (final_r >= 3.5)
+        stabilized_near_target = (abs(final_r - r_star) <= 0.3)
         survived = (np.mean(adpt_traj) > 0.0)
         
         if survived and reached_golden:
@@ -251,14 +257,15 @@ if __name__ == "__main__":
     for res in mc_results:
         plt.plot(res['r_trajectory'], color='blue', alpha=0.3)
         
-    plt.axhline(y=3.5, color='orange', linestyle='--', label='Golden Region Boundary (G)')
+    plt.axhline(y=3.5, color='orange', linestyle='--', label='Golden Region Boundary ($r = 3.5$)')
+    plt.axhline(y=3.6, color='red', linestyle=':', label='Interior Target ($r^* = 3.6$)')
     plt.axhspan(3.5, 4.0, color='orange', alpha=0.1, label='Target Golden Zone')
     
     plt.xlim(0, 25)
     plt.ylim(2.0, 4.0)
     plt.xlabel("Control Epochs ($k$)")
     plt.ylabel("Bifurcation Parameter ($r_k$)")
-    plt.title("Monte Carlo Control Trajectories using ERSDC")
+    plt.title("Monte Carlo Control Trajectories using ERSDC with Interior Mean-Reversion")
     plt.legend(loc='lower right')
     plt.tight_layout()
     plt.show()
