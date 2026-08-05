@@ -345,7 +345,11 @@ def simulate_mmt_closed_loop(
 
         # Apply Policy Control Strategy
         if control_mode == 'ERSDC':
-            r_t, _, _, _ = ersdc_online_step(window, r_t, clf=nb_model)
+            reset_flag, r_value_or_delta, pred_region, h_top, _ = ersdc_online_step(window, clf=nb_model)
+            if reset_flag:
+                r_t = r_value_or_delta          # hard reset (extinction recovery)
+            else:
+                r_t = np.clip(r_t + r_value_or_delta, 0.0, 4.0)
         elif control_mode == 'RANDOM':
             r_t = uniform(0.0, 4.0)
         elif control_mode == 'CONSTANT':
