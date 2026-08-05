@@ -202,27 +202,39 @@ def build_region_naive_bayes(data_pairs):
 
 def ersdc_online_step(
     trajectory_window,
-    current_r,
     clf,
     w=4,
-    delta_step=0.15
+    delta_step=0.15,
+    extinction_reset_r=0.4,
+    entropy_critical=0.4,
 ):
+    """
+    Blind symbolic controller: decides an action based only on the adoption window
+    and the offline-trained region classifier.
+    
+    Returns:
+        reset_flag (bool): if True, the simulation should set r = value_or_delta.
+        value_or_delta (float): absolute r if reset_flag else signed increment.
+        predicted_region (str): classifier output (for diagnostics).
+        h_top (float): estimated topological entropy.
+        action (float): the signed increment (0, +delta, -delta) for logging.
+    """
     current_A = float(np.mean(trajectory_window))
     latest_A = float(trajectory_window[-1])
     
-    # 1. Collapse / Extinction Recovery Safeguard -> Reset to Region A chaos
+    # 1. Extinction / collapse safeguard → reset to high-reward chaos
     if latest_A <= 0.0 or current_A == 0.0:
-        return 0.4, "EXTINCT_RECOVERY", 0.0, 0.0
+        return True, extinction_reset_r, "EXTINCT_RECOVERY", 0.0, 0.0
 
-    # 2. Strict Binary Parsing: {'L', 'R'}
+    # 2. Binary symbolisation: L / R based on adoption threshold 0.5
     symbols = ['R' if a > 0.5 else 'L' for a in trajectory_window]
     words = ["".join(symbols[i:i+w]) for i in range(len(symbols) - w + 1)]
     active_input = " ".join(words) if words else "".join(symbols)
-        
-    # Exact Topological Entropy Computation via DFA Algebra
+    
+    # 3. Topological entropy from the sofic shift
     h_top = compute_topological_entropy(words if words else symbols)
 
-    # 3. Naive Bayes Region Prediction
+    # 4. Naive Bayes region prediction (A, B, CD, EF)
     predicted_region = "UNKNOWN"
     vectorizer = getattr(clf, 'vectorizer_', None)
     if vectorizer is not None:
@@ -232,17 +244,24 @@ def ersdc_online_step(
         except Exception:
             pass
 
-    # 4. Chaos-Driven Value Creation Feedback Policy 
-    # Escape Region EF stabilization/stagnation traps (r >= 3.0) and drive into Region A/CD chaos
-    if current_r >= 3.0 or h_top < 0.4:
-        action = -delta_step  # Push r down toward Region A high-reward chaos
-    elif current_r < 0.4:
-        action = delta_step   # Maintain active exploratory bounds
+    # 5. Purely symbolic control logic (no r)
+    if predicted_region == "EF":
+        # Stagnation band: push left towards chaos
+        action = -delta_step
+    elif predicted_region in ("B", "CD"):
+        # Transitional zones: also push left to reach A
+        action = -delta_step
+    elif predicted_region == "A":
+        # Already in the high-reward window; avoid drifting too low (loss of chaos)
+        if h_top < entropy_critical:
+            action = delta_step   # increase to maintain chaotic activity
+        else:
+            action = 0.0
     else:
+        # Unknown region – conservative hold
         action = 0.0
 
-    new_r = float(np.clip(current_r + action, 0.0, 4.0))
-    return new_r, predicted_region, h_top, action
+    return False, action, predicted_region, h_top, action
 
 # =====================================================================
 # 3. Closed-Loop MMT + ERSDC Network Simulation Engine
